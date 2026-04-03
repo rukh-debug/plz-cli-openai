@@ -1,0 +1,20 @@
+# plz configuration file
+# Place at ~/.config/plz/config.toml or specify with --config flag
+
+# API base URL (OpenAI-compatible endpoint)
+base_url = "https://api.openai.com"
+
+# API key for authentication (optional for local providers like Ollama)
+api_key = "sk-..."
+
+# Model name to use
+model = "gpt-4o"
+
+# Provider name for display purposes (auto-inferred from base_url if omitted)
+provider = "openai"
+
+# Sampling temperature (0.0 - 2.0, higher = more creative)
+temperature = 0.7
+
+# Maximum tokens in the response
+max_tokens = 4096
