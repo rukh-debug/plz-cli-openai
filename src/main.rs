@@ -9,6 +9,7 @@ use reqwest::blocking::Client;
 use serde_json::json;
 use spinners::{Spinner, Spinners};
 use std::process::Command;
+use std::time::Instant;
 
 use std::fs::File;
 use std::io::{self, BufRead};
@@ -62,23 +63,59 @@ pub struct CliArgs {
     pub no_think: bool,
 }
 
+fn format_duration(duration: std::time::Duration) -> String {
+    let secs = duration.as_secs_f64();
+    if secs < 1.0 {
+        format!("{}ms", duration.as_millis())
+    } else {
+        format!("{:.1}s", secs)
+    }
+}
+
+fn print_header(prompt: &str) {
+    let width = 50;
+    let title = format!("plz {}", prompt);
+    let truncated = if title.len() > width - 4 {
+        format!("{}...", &title[..width - 7])
+    } else {
+        title
+    };
+    let padded = format!(" {} ", truncated);
+    let line = "─".repeat(width);
+    println!("\n{}", line.dimmed());
+    println!("{}", padded.cyan().bold());
+    println!("{}\n", line.dimmed());
+}
+
+fn print_section(title: &str) {
+    println!("\n{}", format!("── {} ──", title).dimmed());
+}
+
 fn main() {
     let cli = CliArgs::parse();
 
     if cli.prompt.is_empty() {
-        eprintln!("Error: Command is not complete. Please provide a task description.");
-        eprintln!("Usage: plz <task description>");
-        eprintln!("Example: plz list all files in the current directory");
+        eprintln!(
+            "{} Error: Command is not complete. Please provide a task description.",
+            "✖".red()
+        );
+        eprintln!("\nUsage: plz <task description>");
+        eprintln!("Example: plz list all files in the current directory\n");
         std::process::exit(1);
     }
 
     let prompt_text = cli.prompt.join(" ");
     if prompt_text.trim() == "plz" {
-        eprintln!("Error: Command is not complete. Please provide a task description.");
-        eprintln!("Usage: plz <task description>");
-        eprintln!("Example: plz list all files in the current directory");
+        eprintln!(
+            "{} Error: Command is not complete. Please provide a task description.",
+            "✖".red()
+        );
+        eprintln!("\nUsage: plz <task description>");
+        eprintln!("Example: plz list all files in the current directory\n");
         std::process::exit(1);
     }
+
+    print_header(&prompt_text);
 
     let config = Config::new(&cli);
 
@@ -116,7 +153,9 @@ fn main() {
         format!("Generating with {} ({})...", config.provider, config.model),
     );
 
+    let start = Instant::now();
     let response = request.send().unwrap();
+    let elapsed = start.elapsed();
 
     let status_code = response.status();
     if status_code.is_client_error() {
@@ -129,15 +168,26 @@ fn main() {
             .unwrap_or("Unknown client error");
         spinner.stop_and_persist(
             "✖".red().to_string().as_str(),
-            format!("API error: \"{error_message}\"").red().to_string(),
+            format!(
+                "API error: \"{}\" ({})",
+                error_message,
+                format_duration(elapsed)
+            )
+            .red()
+            .to_string(),
         );
         std::process::exit(1);
     } else if status_code.is_server_error() {
         spinner.stop_and_persist(
             "✖".red().to_string().as_str(),
-            format!("Server error from {}: {status_code}", config.provider)
-                .red()
-                .to_string(),
+            format!(
+                "Server error from {}: {} ({})",
+                config.provider,
+                status_code,
+                format_duration(elapsed)
+            )
+            .red()
+            .to_string(),
         );
         std::process::exit(1);
     }
@@ -157,8 +207,12 @@ fn main() {
 
     spinner.stop_and_persist(
         "✔".green().to_string().as_str(),
-        "Got some code!".green().to_string(),
+        format!("Script generated in {}", format_duration(elapsed))
+            .green()
+            .to_string(),
     );
+
+    print_section("generated script");
 
     PrettyPrinter::new()
         .input_from_bytes(code.as_bytes())
@@ -167,14 +221,15 @@ fn main() {
         .print()
         .unwrap();
 
+    print_section("execute");
+
     let should_run = if cli.force {
         true
     } else {
         Question::new(
-            ">> Run the generated program? [Y/n]"
+            &format!("{} Run this script?", "▶".yellow())
                 .bright_black()
-                .to_string()
-                .as_str(),
+                .to_string(),
         )
         .yes_no()
         .until_acceptable()
@@ -186,6 +241,7 @@ fn main() {
 
     if should_run {
         config.write_to_history(code.as_str());
+        let exec_start = Instant::now();
         spinner = Spinner::new(Spinners::BouncingBar, "Executing...".into());
 
         let output = Command::new("bash")
@@ -200,20 +256,31 @@ fn main() {
                 std::process::exit(1);
             });
 
+        let exec_elapsed = exec_start.elapsed();
+
         if !output.status.success() {
             spinner.stop_and_persist(
                 "✖".red().to_string().as_str(),
-                "The program threw an error.".red().to_string(),
+                format!("Script failed ({})", format_duration(exec_elapsed))
+                    .red()
+                    .to_string(),
             );
+            println!("\n{}", "── error output ──".dimmed());
             println!("{}", String::from_utf8_lossy(&output.stderr));
             std::process::exit(1);
         }
 
         spinner.stop_and_persist(
             "✔".green().to_string().as_str(),
-            "Command ran successfully".green().to_string(),
+            format!(
+                "Script executed successfully in {}",
+                format_duration(exec_elapsed)
+            )
+            .green()
+            .to_string(),
         );
 
+        println!("\n{}", "── output ──".dimmed());
         println!("{}", String::from_utf8_lossy(&output.stdout));
     }
 }
