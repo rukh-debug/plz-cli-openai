@@ -56,6 +56,14 @@ pub struct CliArgs {
 
 fn main() {
     let cli = CliArgs::parse();
+
+    if cli.prompt.is_empty() {
+        eprintln!("Error: Command is not complete. Please provide a task description.");
+        eprintln!("Usage: plz <task description>");
+        eprintln!("Example: plz list all files in the current directory");
+        std::process::exit(1);
+    }
+
     let config = Config::new(&cli);
 
     let client = Client::new();
