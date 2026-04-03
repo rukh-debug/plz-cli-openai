@@ -105,15 +105,6 @@ fn main() {
     }
 
     let prompt_text = cli.prompt.join(" ");
-    if prompt_text.trim() == "plz" {
-        eprintln!(
-            "{} Error: Command is not complete. Please provide a task description.",
-            "✖".red()
-        );
-        eprintln!("\nUsage: plz <task description>");
-        eprintln!("Example: plz list all files in the current directory\n");
-        std::process::exit(1);
-    }
 
     print_header(&prompt_text);
 
