@@ -12,53 +12,92 @@ use std::process::Command;
 
 use std::fs::File;
 use std::io::{self, BufRead};
-// use std::path::Path;
 
 mod config;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
+#[command(author, version, about = "Generate shell scripts from natural language using any OpenAI-compatible API", long_about = None)]
+pub struct CliArgs {
     /// Description of the command to execute
-    prompt: Vec<String>,
+    pub prompt: Vec<String>,
 
-    /// Run the generated program without asking for confirmation
+    /// Run the generated script without asking for confirmation
     #[clap(short = 'y', long)]
-    force: bool,
+    pub force: bool,
+
+    /// API base URL (e.g. https://api.openai.com, http://localhost:11434)
+    #[clap(long = "base-url", short = 'u')]
+    pub base_url: Option<String>,
+
+    /// API key for authentication
+    #[clap(long = "api-key", short = 'k')]
+    pub api_key: Option<String>,
+
+    /// Model name to use (e.g. gpt-4o, qwen2.5-coder:7b)
+    #[clap(long = "model", short = 'm')]
+    pub model: Option<String>,
+
+    /// Provider name for display purposes (e.g. openai, ollama, groq)
+    #[clap(long = "provider", short = 'p')]
+    pub provider: Option<String>,
+
+    /// Sampling temperature (0.0 - 2.0)
+    #[clap(long = "temperature", short = 't')]
+    pub temperature: Option<f32>,
+
+    /// Maximum tokens in the response
+    #[clap(long = "max-tokens")]
+    pub max_tokens: Option<u32>,
+
+    /// Path to config file (default: ~/.config/plz/config.toml)
+    #[clap(long = "config")]
+    pub config: Option<std::path::PathBuf>,
 }
 
 fn main() {
-    let cli = Cli::parse();
-    let config = Config::new();
+    let cli = CliArgs::parse();
+    let config = Config::new(&cli);
 
     let client = Client::new();
-    let mut spinner = Spinner::new(Spinners::BouncingBar, "Generating your command...".into());
-    let api_addr = format!("{}/api/chat", config.ollama_url);
-    let response = client
-        .post(api_addr)
-        .json(&json!({
-            "model": config.ollama_model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "Generate a small Bash/Zsh script for the given task. Return ONLY the raw script without any formatting, markdown, or code block indicators. Dont include explanations if not necessary, else include as comments within the script."
-                },
-                {
-                    "role": "user",
-                    "content": build_prompt(&cli.prompt.join(" "))
-                }
-            ],
-            "stream": false
-        }))
-        .header("Content-Type", "application/json")
-        .send().unwrap();
+    let api_addr = format!("{}/v1/chat/completions", config.base_url);
+    let request_body = json!({
+        "model": config.model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "Generate a small Bash/Zsh script for the given task. Return ONLY the raw script without any formatting, markdown, or code block indicators. Dont include explanations if not necessary, else include as comments within the script."
+            },
+            {
+                "role": "user",
+                "content": build_prompt(&cli.prompt.join(" "))
+            }
+        ],
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+        "stream": false
+    });
 
+    let mut request = client.post(&api_addr).json(&request_body);
+
+    if let Some(ref api_key) = config.api_key {
+        request = request.bearer_auth(api_key);
+    }
+
+    let mut spinner = Spinner::new(
+        Spinners::BouncingBar,
+        format!("Generating with {} ({})...", config.provider, config.model),
+    );
+
+    let response = request.send().unwrap();
 
     let status_code = response.status();
     if status_code.is_client_error() {
         let response_body = response.json::<serde_json::Value>().unwrap();
-        let error_message = response_body.get("error")
-            .and_then(|e| e.as_str())
+        let error_message = response_body
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .or_else(|| response_body.get("error").and_then(|e| e.as_str()))
             .unwrap_or("Unknown client error");
         spinner.stop_and_persist(
             "✖".red().to_string().as_str(),
@@ -68,7 +107,7 @@ fn main() {
     } else if status_code.is_server_error() {
         spinner.stop_and_persist(
             "✖".red().to_string().as_str(),
-            format!("Ollama server is currently experiencing problems. Status code: {status_code}")
+            format!("Server error from {}: {status_code}", config.provider)
                 .red()
                 .to_string(),
         );
@@ -76,12 +115,12 @@ fn main() {
     }
 
     let response_json = response.json::<serde_json::Value>().unwrap();
-    let code = response_json["message"]["content"]
+    let code = response_json["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or_else(|| {
             spinner.stop_and_persist(
                 "✖".red().to_string().as_str(),
-                "Failed to parse response from Ollama".red().to_string(),
+                "Failed to parse response from API".red().to_string(),
             );
             std::process::exit(1);
         })
@@ -157,7 +196,6 @@ fn get_linux_distro() -> Option<String> {
         for line in reader.lines() {
             if let Ok(line) = line {
                 if line.starts_with("ID=") {
-                    // Extract the distribution ID from the line
                     let distro_id = line[3..].trim_matches('"').to_string();
                     return Some(distro_id);
                 }
@@ -170,8 +208,7 @@ fn get_linux_distro() -> Option<String> {
 fn build_prompt(prompt: &str) -> String {
     let os_hint = if cfg!(target_os = "macos") {
         " (on macOS)".to_string()
-    }
-    else if cfg!(target_os = "linux") {
+    } else if cfg!(target_os = "linux") {
         if let Some(distro) = get_linux_distro() {
             format!(" (on {} Linux)", distro)
         } else {
@@ -181,5 +218,9 @@ fn build_prompt(prompt: &str) -> String {
         "".to_string()
     };
 
-    format!("{prompt}{os_hint}:\n\n#!/usr/bin/env zsh\n", prompt = prompt, os_hint = os_hint)
+    format!(
+        "{prompt}{os_hint}:\n\n#!/usr/bin/env zsh\n",
+        prompt = prompt,
+        os_hint = os_hint
+    )
 }
