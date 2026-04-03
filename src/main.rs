@@ -64,6 +64,14 @@ fn main() {
         std::process::exit(1);
     }
 
+    let prompt_text = cli.prompt.join(" ");
+    if prompt_text.trim() == "plz" {
+        eprintln!("Error: Command is not complete. Please provide a task description.");
+        eprintln!("Usage: plz <task description>");
+        eprintln!("Example: plz list all files in the current directory");
+        std::process::exit(1);
+    }
+
     let config = Config::new(&cli);
 
     let client = Client::new();
