@@ -10,6 +10,7 @@ pub struct ConfigFile {
     pub provider: Option<String>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    pub think: Option<String>,
 }
 
 impl ConfigFile {
@@ -65,6 +66,7 @@ pub struct Config {
     pub temperature: f32,
     pub max_tokens: u32,
     pub shell: String,
+    pub think: Option<String>,
 }
 
 impl Config {
@@ -77,6 +79,7 @@ impl Config {
             provider: None,
             temperature: None,
             max_tokens: None,
+            think: None,
         });
 
         let base_url = cli
@@ -136,6 +139,15 @@ impl Config {
             .or(file_config.max_tokens)
             .unwrap_or(4096);
 
+        let think = if cli.no_think {
+            None
+        } else {
+            cli.think
+                .clone()
+                .or_else(|| env::var("PLZ_THINK").ok())
+                .or(file_config.think)
+        };
+
         let shell = env::var("SHELL").unwrap_or_default();
 
         if api_key.is_none() && !base_url.contains("localhost") && !base_url.contains("127.0.0.1") {
@@ -154,6 +166,7 @@ impl Config {
             temperature,
             max_tokens,
             shell,
+            think,
         }
     }
 

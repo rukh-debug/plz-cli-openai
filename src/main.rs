@@ -52,6 +52,14 @@ pub struct CliArgs {
     /// Path to config file (default: ~/.config/plz/config.toml)
     #[clap(long = "config")]
     pub config: Option<std::path::PathBuf>,
+
+    /// Reasoning effort level (low, medium, high) for reasoning models
+    #[clap(long = "think")]
+    pub think: Option<String>,
+
+    /// Disable reasoning/thinking even if configured
+    #[clap(long = "no-think", short = 'x')]
+    pub no_think: bool,
 }
 
 fn main() {
@@ -76,7 +84,7 @@ fn main() {
 
     let client = Client::new();
     let api_addr = format!("{}/v1/chat/completions", config.base_url);
-    let request_body = json!({
+    let mut request_body = json!({
         "model": config.model,
         "messages": [
             {
@@ -92,6 +100,10 @@ fn main() {
         "max_tokens": config.max_tokens,
         "stream": false
     });
+
+    if let Some(ref think) = config.think {
+        request_body["reasoning"] = json!({ "effort": think });
+    }
 
     let mut request = client.post(&api_addr).json(&request_body);
 
